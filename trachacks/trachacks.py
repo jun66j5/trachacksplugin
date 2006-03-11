@@ -3,6 +3,7 @@ from trac.core import *
 from trac.wiki.api import IWikiMacroProvider
 from acct_mgr.htfile import HtPasswdStore
 from acct_mgr.api import IPasswordStore
+from tracrpc.api import IXMLRPCHandler
 import sys, inspect
 
 class TracHacksMacros(Component):
@@ -63,12 +64,18 @@ class TracHacksAccountManager(HtPasswdStore):
         return 'trachacks-htpasswd'
 
     def set_password(self, user, password):
-        # User creation with existing page
+        self.env.log.debug(len(user))
+        if len(user) < 3:
+            raise TracError('user name must be at least 3 characters long')
+        if not re.match(r'^\w+$', user):
+            raise TracError('user name must consist only of alpha-numeric characters')
+        self.env.log.debug("New user %s registered" % user)
         if user not in self.get_users():
             from trac.wiki.model import WikiPage
             db = self.env.get_db_cnx()
             page = WikiPage(self.env, user, db = db)
-            if page.version:
+            # User creation with existing page
+            if page.exists:
                 raise TracError('wiki page "%s" already exists' % user)
             else:
                 page.text = '''= %(user)s =\n\n[[ListTags(%(user)s)]]\n\n[[TagIt(user)]]''' % {'user' : user}
@@ -79,3 +86,55 @@ class TracHacksAccountManager(HtPasswdStore):
 
     def delete_user(self, user):
         HtPasswdStore.delete_user(self, user)
+
+class TracHacksRPC(Component):
+    """ Allow inspection of hacks on TracHacks. """
+    implements(IXMLRPCHandler)
+
+    def xmlrpc_namespace(self):
+        return 'trachacks'
+
+    def xmlrpc_methods(self):
+        yield ('XML_RPC', ((list, str, str),), self.getHacks)
+        yield ('XML_RPC', ((list,),), self.getReleases)
+        yield ('XML_RPC', ((list,),), self.getTypes)
+
+    # Other methods
+    def getReleases(self):
+        """ Return a list of Trac releases TracHacks is aware of. """
+        db = self.env.get_db_cnx()
+        cursor = db.cursor()
+        cursor.execute("SELECT name FROM wiki_namespace WHERE namespace='release'")
+        return [x[0] for x in cursor.fetchall()]
+
+    def getTypes(self):
+        """ Return a list of known Hack types. """
+        db = self.env.get_db_cnx()
+        cursor = db.cursor()
+        cursor.execute("SELECT name FROM wiki_namespace WHERE namespace='type'")
+        return [x[0] for x in cursor.fetchall()]
+
+    def getHacks(self, req, release, type):
+        """ Fetch a list of hacks for Trac release, of type. """
+        from trac.versioncontrol.api import Node
+
+        db = self.env.get_db_cnx()
+        cursor = db.cursor()
+        repo = self.env.get_repository(req.authname)
+        repo_rev = repo.get_youngest_rev()
+
+        # Get releases and types
+        releases = self.getReleases()
+        types = self.getTypes()
+
+        cursor.execute("SELECT name FROM wiki_namespace WHERE namespace=%s " \
+                       "INTERSECT SELECT NAME FROM wiki_namespace WHERE " \
+                       "namespace=%s", (release, type));
+        for (plugin,) in cursor.fetchall():
+            if plugin.startswith('tags/'): continue
+            path = '%s/%s' % (plugin.lower(), release)
+            rev = 0
+            if repo.has_node(path, repo_rev):
+                node = repo.get_node(path)
+                rev = node.rev
+            yield (plugin, rev)
