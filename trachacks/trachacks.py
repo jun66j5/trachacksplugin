@@ -1,117 +1,213 @@
-# vim: expandtab
+# -*- coding: utf-8 -*-
+#
+# Copyright (C) 2006 Alec Thomas <alec@swapoff.org>
+#
+# This software is licensed as described in the file COPYING, which
+# you should have received as part of this distribution.
+#
+
+import re
 from trac.core import *
-from trac.wiki.api import IWikiMacroProvider
-from tracrpc.api import IXMLRPCHandler
+from trac.config import *
 from acct_mgr.htfile import HtPasswdStore
 from acct_mgr.api import IPasswordStore
-import sys, inspect
+from trac.wiki.model import WikiPage
+from trac.util.compat import sorted
+from trac.web.api import IRequestHandler
+from trac.web.chrome import ITemplateProvider, INavigationContributor, \
+                            add_stylesheet, add_script, add_ctxtnav
+from trac.resource import get_resource_url
+from tractags.api import TagSystem
+from tractags.macros import render_cloud
+from tracvote import VoteSystem
+from genshi.builder import tag as builder
 
 
-def try_int(s):
-    "Convert to integer if possible."
-    try: return int(s)
-    except: return s
 
-def natsort_key(s):
-    "Used internally to get a tuple by which s is sorted."
-    import re
-    return map(try_int, re.findall(r'(\d+|\D+)', s))
-
-def natcmp(a, b):
-    "Natural string comparison, case sensitive."
-    return cmp(natsort_key(a), natsort_key(b))
-
-def natcasecmp(a, b):
-    "Natural string comparison, ignores case."
-    return natcmp(a.lower(), b.lower())
-
-def natsort(seq, cmp=natcmp):
-    "In-place natural string sort."
-    seq.sort(cmp)
-
-def natsorted(seq, cmp=natcmp):
-    "Returns a copy of seq, sorted by natural string sort."
-    temp = list(seq)
-    natsort(temp, cmp)
-    return temp
+def pluralise(n, word):
+    """Return a (naively) pluralised phrase from a count and a singular
+    word."""
+    if n == 0:
+        return 'No %ss' % word
+    elif n == 1:
+        return '%i %s' % (n, word)
+    else:
+        return '%i %ss' % (n, word)
 
 
-class TracHacksMacros(Component):
-    """ List of meta types """
-    implements(IWikiMacroProvider)
+def natural_sort(l):
+  """Sort the given list in the way that humans expect."""
+  convert = lambda text: int(text) if text.isdigit() else text
+  alphanum_key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)]
+  return sorted(l, key=alphanum_key)
 
-    # IWikiMacroProvider methods
-    def get_macros(self):
-        yield 'ListTypes'
 
-    def get_macro_description(self, name):
-        return "Main hack type listing"
+class TracHacksHandler(Component):
+    """Trac-Hacks request handler."""
+    implements(INavigationContributor, IRequestHandler, ITemplateProvider)
 
-    def render_macro(self, req, name, content):
-        from StringIO import StringIO
-        from trac.wiki import wiki_to_html
-        from trac.wiki.model import WikiPage
-        from trac.util import Markup
-        from tractags.api import TagEngine
-        import re
+    limit = IntOption('trachacks', 'limit', 25,
+        'Default maximum number of hacks to display.')
 
-        tagspace = TagEngine(self.env).tagspace.wiki
+    path_match = re.compile(r'/hacks/?(.+)?')
+    title_extract = re.compile(r'=\s+([^=]*)=', re.MULTILINE | re.UNICODE)
 
-        out = StringIO()
-        pages = tagspace.get_tagged_names(tags=['type'])
-        pages = sorted(pages)
+    # IRequestHandler methods
+    def match_request(self, req):
+        return self.path_match.match(req.path_info)
 
-        out.write('<form style="text-align: right; padding-top: 1em; margin-right: 5em;" method="get">')
-        out.write('<span style="font-size: xx-small">')
-        out.write('Show hacks for releases: ')
-        releases = natsorted(tagspace.get_tagged_names(tags=['release']))
-        if 'update_th_filter' in req.args:
-            show_releases = req.args.get('release', ['0.10'])
-            if isinstance(show_releases, basestring):
-                show_releases = [show_releases]
-            req.session['th_release_filter'] = ','.join(show_releases)
+    def process_request(self, req):
+        data = {}
+        tag_system = TagSystem(self.env)
+
+        match = self.path_match.match(req.path_info)
+        view = 'cloud'
+        if match.group(1):
+            view = match.group(1)
+
+        # Hack types
+        types = [r.id for r, _ in tag_system.query(req, 'realm:wiki type')]
+        # Trac releases
+        releases = natural_sort([r.id for r, _ in
+                                 tag_system.query(req, 'realm:wiki release')])
+
+        hacks = self.fetch_hacks(req, data, types)
+
+        add_stylesheet(req, 'tags/css/tractags.css')
+        add_stylesheet(req, 'hacks/css/trachacks.css')
+        add_script(req, 'hacks/js/trachacks.js')
+
+        views = ['cloud', 'list']
+        for v in views:
+            if v != view:
+                add_ctxtnav(req, builder.a(v.title(), href=req.href.hacks(v)))
+            else:
+                add_ctxtnav(req, v.title())
+        if view == 'cloud':
+            return self.render_cloud(req, data, hacks)
+        elif view == 'list':
+            return self.render_list(req, data, hacks)
+
+    def fetch_hacks(self, req, data, types):
+        """Return a list of hacks in the form
+
+        [votes, rank, resource, tags, title]
+        """
+        tag_system = TagSystem(self.env)
+        vote_system = VoteSystem(self.env)
+        hacks = []
+        global limit
+        ALL = 9999
+        limit = req.args.get('limit', self.limit)
+
+        # Custom tag query modifiers
+        def top_modifier(name, node, context):
+            """top:<n> Only show the top N results."""
+            global limit
+            if node.value == 'all':
+                limit = ALL
+                return True
+            try:
+                assert node.type == node.TERM
+                limit = int(node.value)
+            except (AssertionError, ValueError):
+                raise TracError('top: expects an integer')
+            return True
+
+        data['tag_query'] = req.args.get('q', '')
+
+        # Get list of hacks from tag system
+        query = 'realm:wiki (%s)' % ' or '.join(types)
+        if req.args.get('q'):
+            query += ' (' + req.args.get('q', '') + ')'
+        self.env.log.debug('Hack query: %s', query)
+        attribute_handlers={'top': top_modifier,}
+        try:
+            tagged = list(tag_system.query(req, query,
+                                           attribute_handlers=attribute_handlers))
+        except TracError, e:
+            tagged = []
+            tagged = tag_system.query(req, 'realm:wiki (#s)' % ' or '.join(types),
+                                      attribute_handlers=attribute_handlers)
+            data['tag_query_error'] = str(e)
+
+        self.env.log.debug(limit)
+        if limit != ALL:
+            data['limit'] = 'top %s' % limit
         else:
-            show_releases = req.session.get('th_release_filter', '0.10').split(',')
-        for version in releases:
-            checked = version in show_releases
-            out.write('<input type="checkbox" name="release" value="%s"%s>%s\n' % (version, checked and ' checked' or '', version))
-        out.write('<input name="update_th_filter" type="submit" style="font-size: xx-small; padding: 0; border: solid 1px black" value="Update"/>')
-        out.write('</span>')
-        out.write('</form>')
-        for i, pagename in enumerate(pages):
-            page = WikiPage(self.env, pagename)
-            if page.text:
-                topmargin = '0em'
-                if i < len(pages) - 1:
-                    bottommargin = '0em'
-                else:
-                    bottommargin = '2em'
+            data['limit'] = 'all'
 
-                out.write('<fieldset style="padding: 1em; margin: %s 5em %s 5em; border: 1px solid #999;">\n' % (topmargin, bottommargin))
-                body = page.text
-                title = re.search('=+\s([^=]*)=+', body)
-                if title:
-                    title = title.group(1).strip()
-                    body = re.sub('=+\s([^=]*)=+', '', body, 1)
-                else:
-                    title = pagename
-                body = re.sub('\\[\\[TagIt.*', '', body)
-                out.write('<legend style="color: #999;"><a href="%s">%s</a></legend>\n' % (self.env.href.wiki(pagename), title))
-                body = wiki_to_html(body, self.env, req)
-                # Dear God, the horror!
-                for line in body.splitlines():
-                    show = False
-                    for release in show_releases:
-                        self.env.log.debug(release)
-                        if '>%s</a>' % release in line:
-                            show = True
-                            break
-                    if show or not '<li>' in line:
-                        out.write(line)
+        # Build hacks list
+        for resource, tags in tagged:
+            page = WikiPage(self.env, resource.id)
+            _, count, _ = vote_system.get_vote_counts(resource)
+            match = self.title_extract.search(page.text)
+            count_string = pluralise(count, 'vote')
+            if match:
+                title = '%s (%s)' % (match.group(1).strip(), count_string)
+            else:
+                title = '%s' % count_string
+            hacks.append([count, None, resource, tags, title])
 
-                out.write('</fieldset>\n')
+        # Rank
+        hacks = sorted(hacks, key=lambda i: -i[0])[:limit]
+        for i, hack in enumerate(hacks):
+            hack[1] = i
+        return hacks
 
-        return out.getvalue()
+    def render_list(self, req, data, hacks):
+        ul = builder.ul()
+        for votes, rank, resource, tags, title in sorted(hacks, key=lambda h: h[2].id):
+            li = builder.li(builder.a(resource.id,
+                                      href=req.href.wiki(resource.id)),
+                            ' - ', title)
+            ul(li)
+        data['tag_body'] = ul
+        return 'hacks_view.html', data, None
+
+    def render_cloud(self, req, data, hacks):
+        by_name = dict([(r[2].id, r) for r in hacks])
+
+        def link_renderer(tag, count, percent):
+            votes, rank, resource, tags, title = by_name[tag]
+            href = req.href.wiki(resource.id)
+            font_size = 10.0 + (percent * 20.0)
+            colour = 128.0 - (percent * 128.0)
+            colour = '#%02x%02x%02x' % ((colour,) * 3)
+            a = builder.a(tag, rel='tag', title=title, href=href, class_='tag',
+                style='font-size: %ipx; color: %s' % (font_size, colour))
+            return a
+
+        cloud_hacks = dict([(hack[2].id, hack[0]) for hack in hacks])
+        data['tag_body'] = render_cloud(self.env, req, cloud_hacks, link_renderer)
+
+        return 'hacks_view.html', data, None
+
+    # INavigationContributor methods
+    def get_active_navigation_item(self, req):
+        return 'hacks'
+
+    def get_navigation_items(self, req):
+        yield ('mainnav', 'hacks',
+                builder.a('Hacks', href=req.href.hacks(), accesskey='H'))
+
+    # ITemplateProvider methods
+    def get_templates_dirs(self):
+        """
+        Return the absolute path of the directory containing the provided
+        ClearSilver templates.
+        """
+        from pkg_resources import resource_filename
+        return [resource_filename(__name__, 'templates')]
+
+    def get_htdocs_dirs(self):
+        """Return the absolute path of a directory containing additional
+        static resources (such as images, style sheets, etc).
+        """
+        from pkg_resources import resource_filename
+        return [('hacks', resource_filename(__name__, 'htdocs'))]
+
+
 
 class TracHacksAccountManager(HtPasswdStore):
     """ Do some basic validation on new users, and create a new user page. """
@@ -146,59 +242,3 @@ class TracHacksAccountManager(HtPasswdStore):
 
     def delete_user(self, user):
         HtPasswdStore.delete_user(self, user)
-
-class TracHacksRPC(Component):
-    """ Allow inspection of hacks on TracHacks. """
-    implements(IXMLRPCHandler)
-
-    def xmlrpc_namespace(self):
-        return 'trachacks'
-
-    def xmlrpc_methods(self):
-        yield ('XML_RPC', ((list, str, str),), self.getHacks)
-        yield ('XML_RPC', ((list,),), self.getReleases)
-        yield ('XML_RPC', ((list,),), self.getTypes)
-        yield ('XML_RPC', ((dict,str),), self.getDetails)
-
-    # Other methods
-    def getReleases(self, req):
-        """ Return a list of Trac releases TracHacks is aware of. """
-        from tractags.api import TagEngine
-        return TagEngine(self.env).tagspace.wiki.get_tagged_names(['release'])
-
-    def getTypes(self, req):
-        """ Return a list of known Hack types. """
-        from tractags.api import TagEngine
-        return TagEngine(self.env).tagspace.wiki.get_tagged_names(['type'])
-
-    def getHacks(self, req, release, type):
-        """ Fetch a list of hacks for Trac release, of type. """
-        from trac.versioncontrol.api import Node
-        from tractags.api import TagEngine
-        repo = self.env.get_repository(req.authname)
-        wikitags = TagEngine(self.env).tagspace.wiki
-        repo_rev = repo.get_youngest_rev()
-        releases = wikitags.get_tagged_names([release])
-        types = wikitags.get_tagged_names([type])
-        for plugin in releases.intersection(types):
-            if plugin.startswith('tags/'): continue
-            path = '%s/%s' % (plugin.lower(), release)
-            rev = 0
-            if repo.has_node(str(path), repo_rev):
-                node = repo.get_node(path)
-                rev = node.rev
-            yield (plugin, rev)
-
-    def getDetails(self, req, hack):
-        """ Fetch hack details. Returns dict with name, dependencies and
-            description. """
-        from tractags.api import TagEngine
-        wikitags = TagEngine(self.env).tagspace.wiki
-        tags = wikitags.get_tags(hack)
-        types = self.getTypes()
-        hacks = wikitags.get_tagged_names(types)
-
-        dependencies = hacks.intersection(tags)
-        href, htmllink, description = wikitags.name_details(hack)
-        return {'name': hack, 'dependencies': tuple(dependencies),
-                'description': description}
