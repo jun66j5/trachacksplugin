@@ -41,6 +41,10 @@ from tractags.query import Query
 from tracvote import VoteSystem
 
 
+_SVN_CONFIG_DIR = os.environ.get('TRACHACKS_SVN_CONFIG_DIR',
+                                 '/var/www/trac-hacks.org/trac/.subversion')
+
+
 def pluralise(n, word):
     """Return a (naively) pluralised phrase from a count and a singular
     word."""
@@ -505,9 +509,15 @@ class TracHacksHandler(Component):
                      for release in selected_releases
                      if release != 'anyrelease')
         message = 'New hack %s, created by %s' % (page_name, req.authname)
-        args = ['/usr/bin/svn', 'mkdir', '--username', req.authname,
-                '--non-interactive', '-m', message, '--'] + paths
-        proc = Popen(args, stdout=PIPE, stderr=PIPE, close_fds=True)
+        args = ['/usr/bin/svn', 'mkdir', '-q', '--username', req.authname,
+                '--config-dir', _SVN_CONFIG_DIR, '--non-interactive',
+                '-m', message, '--'] + paths
+        saved_umask = umask(002)
+        try:
+            proc = Popen(args, stdout=PIPE, stderr=PIPE, close_fds=True,
+                         env=env)
+        finally:
+            umask(saved_umask)
         stdout, stderr = proc.communicate()
         if proc.returncode != 0:
             raise Exception('Failed to create Subversion paths:\n%s%s' %
