@@ -8,13 +8,19 @@
 }
 
 .newhack input[type="text"] {
- width: 90%;
+ box-sizing: border-box;
+ -moz-box-sizing: border-box;
+ width: 100%;
+ *width: 90%;
  padding: 2px;
  margin: 0.1em 0em;
 }
 
 .newhack textarea {
- width: 90%;
+ box-sizing: border-box;
+ -moz-box-sizing: border-box;
+ width: 100%;
+ *width: 90%;
  padding: 4px;
  margin: 0.1em 0em;
 }
@@ -24,8 +30,7 @@
 }
 
 .newhack dd {
- margin: 1em;
- margin-top: 0em;
+ margin: 0 1em 1em;
 }
 
 /* TODO pointer.gif XXX XXX XXX */
@@ -43,7 +48,10 @@
 .newhack div.error {
  background: #ffb0b0;
  border: 1px solid #e04040;
- width: 90%;
+ box-sizing: border-box;
+ -moz-box-sizing: border-box;
+ width: 100%;
+ *width: 90%;
  text-align: center;
  margin: 0.2em 0em;
  padding: 2px;
