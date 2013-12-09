@@ -2,8 +2,7 @@
 .tagcloud li.last:after { content: ""; }
 
 #content.newhack {
- margin-left: 40px;
- margin-right: auto;
+ margin: 0 auto 2em 40px;
  width: 640px;
 }
 
