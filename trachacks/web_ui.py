@@ -182,6 +182,8 @@ class TracHacksHandler(Component):
                  'Please write a few words for the description.')
         form.add('description', MinLength(16),
                  'Please write at least a sentence or two for the description.')
+        form.add('installation', MinLength(16),
+                 'Please write at least a sentence or two for the installation.')
         form.add('release', Chain(MinLength(1), ReleasesExist(self.env)),
                  'At least one release must be checked.',
                  path='//dd[@id="release"]', where='append')
