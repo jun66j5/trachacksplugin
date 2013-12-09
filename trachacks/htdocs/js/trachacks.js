@@ -3,6 +3,9 @@ jQuery(document).ready(function($) {
         return $.grep(text.split(/ +/g), function(v) { return !!v });
     };
 
+    var form = $('#content.newhack form');
+    var create_button = form.find('[name=create]');
+
     /* Highlight tags from the mini-cloud that are in the tags field. */
     var highlight_tags = function() {
         var tags = split_tags($('#tags').val());
@@ -55,6 +58,41 @@ jQuery(document).ready(function($) {
     // Focus first error control. If none, focus #name.
     $('input[class="error"], textarea[class="error"], #name').filter(':first')
                                                              .focus();
+
+    // Enable submit button if all inputs are filled
+    var set_create_button = function() {
+        var disabled = false;
+        var texts = $('#name, #title, #description, #installation');
+        texts.each(function() {
+            if (!$.trim($(this).val())) {
+                disabled = true;
+                return false;
+            }
+        });
+        $.each(['#release :checked', '#type :checked'], function(idx, selector)
+        {
+            if ($(selector).length === 0) {
+                disabled = true;
+                return false;
+            }
+        });
+        create_button.attr('disabled', disabled);
+    };
+    var timeout_id = null;
+    $('#name, #title, #description, #installation')
+        .bind('blur keyup', function()
+    {
+        if (timeout_id !== null) {
+            clearTimeout(timeout_id);
+        }
+        timeout_id = setTimeout(function() {
+            timeout_id = null;
+            set_create_button();
+        }, 1000);
+    });
+    form.find(':checkbox, :radio').bind('click', set_create_button);
+    create_button.bind('focus', set_create_button);
+    set_create_button();
 
     $('#tags').bind('keyup change', highlight_tags);
 
