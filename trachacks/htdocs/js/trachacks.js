@@ -28,21 +28,20 @@ jQuery(document).ready(function($) {
     });
 
     // Handle focus/blur of input fields
-    $.fn.handleInfo = function(hint, label) {
+    $.fn.handleInfo = function(label) {
         return this.each(function() {
-            var hintid = $(!hint ? '#' + this.id + 'hint' : hint);
+            var id = this.id;
+            var input = $(this);
+            var element = input.closest('dl');
+            var hintid = $('#' + id + 'hint');
+            input.bind({focus: function() { hintid.show() },
+                        blur: function() { hintid.hide() }});
+            element.bind({mousemove: function() { hintid.show() },
+                          mouseleave: function() { hintid.hide() }});
 
-            $(this).focus(function() { hintid.show() });
-            $(this).blur(function() { hintid.hide() });
-
-            if (hintid.attr('copied_label') == undefined) {
-                var title = label;
+            if (!hintid.attr('copied_label')) {
                 hintid.attr('copied_label', true);
-                if (title == undefined) {
-                    $('label[for="' + this.id + '"]').each(function() {
-                        title = $(this).text();
-                    });
-                }
+                var title = label || $('label[for="' + id + '"]').html();
                 hintid.prepend('<strong>' + title + '</strong>' +
                                '<span class="hint-pointer">&nbsp;</span>');
             }
@@ -51,9 +50,8 @@ jQuery(document).ready(function($) {
 
     // Add hints to controls.
     $('#name, #title, #description, #installation, #tags').handleInfo();
-    $('#cloud a').handleInfo('#tagshint');
-    $('input[name="type"]').handleInfo('#typehint', 'Type');
-    $('input[name="release"]').handleInfo('#releasehint', 'Compatibility');
+    $('#type').handleInfo('Type');
+    $('#release').handleInfo('Compatibility');
 
     // Focus first error control. If none, focus #name.
     $('input[class="error"], textarea[class="error"], #name').filter(':first')

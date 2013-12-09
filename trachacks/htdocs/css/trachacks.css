@@ -24,6 +24,14 @@
  margin: 0.1em 0em;
 }
 
+.newhack fieldset {
+ padding: 1em 0;
+}
+
+.newhack fieldset dl {
+ padding: 0 1em;
+}
+
 .newhack dt {
  font-weight: bold;
 }
