@@ -178,7 +178,7 @@ class TracHacksHandler(Component):
         # Validate form
         form = Form('content')
         form.add('name', Chain(
-                 Pattern(r'[A-Z][A-Za-z0-9]+(?:[A-Z][A-Za-z0-9]+)*'),
+                 Pattern(r'[A-Z][A-Za-z0-9]+(?:[A-Z][A-Za-z0-9]+)*\Z'),
                  HackDoesntExist(self.env),
                  ),
                  'Name must be in CamelCase.')
