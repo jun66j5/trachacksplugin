@@ -166,9 +166,6 @@ class TracHacksHandler(Component):
         'Default maximum number of hacks to display.')
     template = Option('trachacks', 'template', 'NewHackTemplate',
         'Name of wiki page that serves as template for new hacks.')
-    svnbase = Option('trachacks', 'subversion_base_url',
-        'http://trac-hacks.org/svn',
-        'Base URL of the Subversion repository.')
     lockfile = Option('trachacks', 'lock_file', '/var/tmp/newhack.lock',
         'Path and name of lockfile to secure new hack creation')
 
@@ -381,13 +378,16 @@ class TracHacksHandler(Component):
             context = self.form.validate(data)
             data['form_context'] = context
 
+            repos = self.env.get_repository()
+
             vars = {}
             vars['OWNER'] = req.authname
             vars['WIKINAME'] = get_page_name(data['name'], data.get('type', ''))
             vars['TYPE'] = data.setdefault('type', 'plugin')
             vars['TITLE'] = data.setdefault('title', 'No title available')
             vars['LCNAME'] = vars['WIKINAME'].lower()
-            vars['SOURCEURL'] = '%s/%s' % (self.svnbase, vars['LCNAME'])
+            vars['SOURCEURL'] = repos.get_path_url(vars['LCNAME'], None) or \
+                                'http://localhost/svn/' + vars['LCNAME']
             vars['DESCRIPTION'] = data.setdefault('description',
                                                   'No description available')
             vars['EXAMPLE'] = data.setdefault('example',
