@@ -514,8 +514,8 @@ class TracHacksHandler(Component):
 
         env = os.environ.copy()
         env['LC_ALL'] = env['LANG'] = 'en_US.UTF-8'
-        svn_path = 'file://%s' % self.config.get('trac', 'repository_dir')
-        svn_path = svn_path.rstrip('/')
+        repos = self.env.get_repository()
+        svn_path = ('file://%s' % repos.params['dir']).rstrip('/')
         paths = ['%s/%s' % (svn_path, hack_path)]
         paths.extend('%s/%s/%s' % (svn_path, hack_path, release)
                      for release in selected_releases
