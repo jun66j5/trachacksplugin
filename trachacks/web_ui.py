@@ -478,7 +478,8 @@ class TracHacksHandler(Component):
 
                 # Step 5: Tag the new wiki page
                 res = Resource('wiki', page_name)
-                tags = data['tags'].split() + selected_releases + [data['type']]
+                tags = sorted(set(data['tags'].split() + selected_releases + \
+                                  [data['type'], req.authname]))
                 TagSystem(self.env).set_tags(req, res, tags)
                 steps_done.append('tags')
 
