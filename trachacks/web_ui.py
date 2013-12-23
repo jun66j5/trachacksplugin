@@ -390,8 +390,8 @@ class TracHacksHandler(Component):
                                 'http://localhost/svn/' + vars['LCNAME']
             vars['DESCRIPTION'] = data.setdefault('description',
                                                   'No description available')
-            vars['EXAMPLE'] = data.setdefault('example',
-                                              'No example available')
+            vars['INSTALLATION'] = data.setdefault('installation',
+                                                   'No installation available')
 
             if 'create' in req.args and not context.errors:
                 success, message = self.create_hack(req, data, vars)
